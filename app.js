@@ -1,8 +1,10 @@
-// app.js — Techno-Quizziz Prototype v2 (fixed buttons, accounts, teacher-only flow)
-// Local-first: no server. Data in localStorage under keys:
-// - tq_users_v2 (accounts), tq_session_v2 (current session), tq_data_v2 (quizzes, rooms, records)
+// app.js — Techno-Quizziz Prototype v2 (Firebase-integrated)
+// Usage: Replace firebaseConfig values and flip useFirebase = true to enable Firestore.
+// Keep firebase SDK (compat) scripts loaded in index.html before this file.
 
 (() => {
+  // ---------- Config ----------
+  const useFirebase = true; // set to false to disable Firebase and use localStorage-only
   // ---------- Helpers ----------
   const $ = s => document.querySelector(s);
   const $$ = s => Array.from(document.querySelectorAll(s));
@@ -33,6 +35,7 @@
   const quizPage = $('#quiz');
   const resultPage = $('#result');
 
+  // ---------- Event wiring (will reference functions declared later) ----------
   // landing buttons
   $('#landing-teacher').addEventListener('click', () => openTeacherLanding());
   $('#landing-student').addEventListener('click', () => showSection('student'));
@@ -53,18 +56,18 @@
   $('#btn-logout').addEventListener('click', logout);
   $('#add-set').addEventListener('click', addSet);
   $('#save-quiz').addEventListener('click', saveQuiz);
-  $('#start-quiz').addEventListener('click', startQuizFromDraft);
+  $('#start-quiz').addEventListener('click', () => startQuizFromDraft()); // async-safe wrapper
   $('#add-q').addEventListener('click', addQuestion);
   $('#clear-q').addEventListener('click', clearQuestionBuilder);
-  $('#end-quiz').addEventListener('click', endRoom);
+  $('#end-quiz').addEventListener('click', () => endRoom()); // async-safe wrapper
   $('#export-results').addEventListener('click', exportLastRun);
 
   // student UI
-  $('#join-room').addEventListener('click', studentJoin);
+  $('#join-room').addEventListener('click', () => studentJoin()); // async-safe wrapper
   $('#student-signup').addEventListener('click', ()=> showAuth('signup','student'));
 
   // quiz UI
-  $('#submit-answer').addEventListener('click', submitAnswerHandler);
+  $('#submit-answer').addEventListener('click', () => submitAnswerHandler()); // async-safe wrapper
   $('#next-q').addEventListener('click', ()=> { $('#submit-answer').click(); });
   $('#ack-directions').addEventListener('click', ()=> {
     $('#set-directions-box').classList.add('hidden');
@@ -93,6 +96,124 @@
   let timerHandle = null;
   let remainingTime = 0;
 
+  // ---------- Firebase integration ----------
+  let db = null;
+  let firebaseRoomUnsub = null;
+
+  if(useFirebase){
+    // <-- REPLACE with YOUR firebase config from console -->
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      // storageBucket, messagingSenderId, appId are optional here
+    };
+
+    if(typeof firebase === 'undefined' || !firebase || !firebase.initializeApp){
+      console.warn('Firebase not found. Make sure compat scripts are included in index.html before app.js');
+    } else {
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.firestore();
+    }
+  }
+
+  // ---------- Firestore helpers ----------
+  async function firebaseCreateRoom(quiz, classSection = 'Default') {
+    if(!db) throw new Error('Firestore not initialized');
+    let code = null;
+    for(let tries=0; tries<6; tries++){
+      code = String(Math.floor(1000 + Math.random()*9000));
+      const snap = await db.collection('rooms').doc(code).get();
+      if(!snap.exists) break;
+      code = null;
+    }
+    if(!code) throw new Error('Could not generate unique room code');
+
+    const roomDoc = {
+      code,
+      quizId: quiz.id,
+      quizTitle: quiz.title,
+      createdBy: SESSION ? SESSION.username : 'guest',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      status: 'open',
+      quiz: quiz,
+      classSection: classSection || 'Default'
+    };
+    await db.collection('rooms').doc(code).set(roomDoc);
+    return code;
+  }
+
+  async function firebaseJoinRoom(code, playerId, playerName) {
+    if(!db) throw new Error('Firestore not initialized');
+    const roomRef = db.collection('rooms').doc(code);
+    const roomSnap = await roomRef.get();
+    if(!roomSnap.exists) throw new Error('Room not found or ended');
+    const p = {
+      id: playerId,
+      name: playerName,
+      score: 0,
+      totalScore: 0,
+      correctCount: 0,
+      joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      lastUpdate: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    await roomRef.collection('participants').doc(playerId).set(p);
+    return roomSnap.data();
+  }
+
+  function firebaseListenRoom(code, onRoomUpdate, onParticipantsUpdate){
+    if(!db) { console.warn('Firestore not initialized'); return null; }
+    if(firebaseRoomUnsub) { firebaseRoomUnsub(); firebaseRoomUnsub = null; }
+
+    const roomRef = db.collection('rooms').doc(code);
+
+    const unsubRoom = roomRef.onSnapshot(snap => {
+      const data = snap.exists ? snap.data() : null;
+      onRoomUpdate && onRoomUpdate(data);
+    });
+
+    const unsubParts = roomRef.collection('participants').onSnapshot(snap => {
+      const parts = [];
+      snap.forEach(doc => parts.push(doc.data()));
+      onParticipantsUpdate && onParticipantsUpdate(parts);
+    });
+
+    firebaseRoomUnsub = () => { unsubRoom(); unsubParts(); };
+    return firebaseRoomUnsub;
+  }
+
+  async function firebaseUpdateParticipantScore(roomCode, playerId, updates = {}) {
+    if(!db) throw new Error('Firestore not initialized');
+    const pRef = db.collection('rooms').doc(roomCode).collection('participants').doc(playerId);
+    const data = {
+      ...updates,
+      lastUpdate: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    await pRef.set(data, { merge: true });
+  }
+
+  async function firebaseEndRoomAndSaveRecord(roomCode) {
+    if(!db) throw new Error('Firestore not initialized');
+    const roomRef = db.collection('rooms').doc(roomCode);
+    const roomSnap = await roomRef.get();
+    if(!roomSnap.exists) throw new Error('Room not found');
+    const roomData = roomSnap.data();
+    const partsSnap = await roomRef.collection('participants').get();
+    const participants = [];
+    partsSnap.forEach(d => participants.push(d.data()));
+    const rec = {
+      code: roomCode,
+      quiz: roomData.quiz,
+      createdBy: roomData.createdBy,
+      classSection: roomData.classSection || 'Default',
+      endedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      participants
+    };
+    const recRef = await db.collection('records').add(rec);
+    await roomRef.update({ status: 'ended', endedAt: firebase.firestore.FieldValue.serverTimestamp() });
+    return recRef.id;
+  }
+
   // ---------- Initialization ----------
   renderLandingText();
   renderSets();
@@ -101,8 +222,12 @@
   renderRecords();
   restoreSession(); // auto-login if session exists
 
-  // ---------- Functions ----------
+  // if there are rooms already, pick first as currentRoom for teacher display (local mirror)
+  const rc = Object.keys(APP.rooms || {});
+  if(rc.length) currentRoom = APP.rooms[rc[0]];
+  renderLiveRoom();
 
+  // ---------- UI functions ----------
   function showSection(name){
     [landing, auth, teacher, student, quizPage, resultPage].forEach(s => s.classList.add('hidden'));
     if(name === 'landing') landing.classList.remove('hidden');
@@ -114,9 +239,7 @@
   }
 
   function openTeacherLanding(){
-    // If logged in as teacher -> go to teacher page
     if(SESSION && SESSION.role === 'teacher') return showSection('teacher');
-    // else show auth (login) for teacher or sign up
     showAuth('login','teacher');
   }
 
@@ -139,7 +262,6 @@
     USERS[u] = { username: u, pass: p, role: r };
     saveJSON(STORAGE.USERS, USERS);
     alert('Account created. You can now log in.');
-    // auto-login after signup for convenience
     SESSION = { username: u, role: r };
     saveJSON(STORAGE.SESSION, SESSION);
     restoreSession();
@@ -169,7 +291,6 @@
 
   function restoreSession(){
     if(!SESSION) return;
-    // if teacher, show teacher page and welcome
     if(SESSION.role === 'teacher'){
       $('#teacher-welcome').textContent = `Welcome, ${SESSION.username} (Teacher)`;
       showSection('teacher');
@@ -229,7 +350,6 @@
   function buildTypeFields(type){
     const tf = document.getElementById('type-fields');
     tf.innerHTML = '';
-    // using inline IDs so later code can read them
     if(type === 'mcq'){
       tf.innerHTML = `
         <label>Option A <input id="opt-a" class="opt" /></label>
@@ -252,7 +372,6 @@
           <div class="row"><button id="add-pair" class="btn small">Add Pair</button></div>
         </div>
         <div class="muted small">When students take the quiz they'll match left items with dropdowns of right items.</div>`;
-      // attach pair handling
       setTimeout(()=> {
         const addPair = document.getElementById('add-pair');
         const left = document.getElementById('pair-left'); const right = document.getElementById('pair-right'); const listEl = document.getElementById('pairs-list');
@@ -370,7 +489,6 @@
         document.getElementById('q-keywords').value = (q.keywords||[]).join(',');
       }
     },50);
-    // remove original to let teacher re-add
     s.questions.splice(qi,1);
     renderQuestionsList();
   }
@@ -383,31 +501,52 @@
     for(const s of draft.sets) if(!s.questions || s.questions.length===0) return alert('Each set must have at least one question.');
     const quiz = { id: nowId('quiz'), title, timePer: Math.max(5,parseInt(document.getElementById('quiz-time').value)||30), sets: JSON.parse(JSON.stringify(draft.sets)), createdBy: SESSION ? SESSION.username : 'local' };
     APP.quizzes.push(quiz); saveApp();
-    // reset draft
     draft = { sets: [] }; selectedSetIndex=-1;
     document.getElementById('quiz-title').value=''; document.getElementById('quiz-time').value=30;
     renderSets(); renderQuizList();
     alert('Quiz saved.');
   }
 
-  function startQuizFromDraft(){
-    // teacher must be logged in (teacher mode)
+  // ---------- Start live quiz (teacher) ----------
+  async function startQuizFromDraft(){
     if(!SESSION || SESSION.role !== 'teacher') {
       if(!confirm('Start quiz as guest teacher? It is recommended to login as Teacher. Continue?')) return;
     }
     if(draft.sets.length === 0) return alert('Add at least one set (or load a saved quiz).');
     const quiz = { id: nowId('quiz'), title: document.getElementById('quiz-title').value || 'Live Quiz', timePer: Math.max(5,parseInt(document.getElementById('quiz-time').value)||30), sets: JSON.parse(JSON.stringify(draft.sets)), createdBy: SESSION ? SESSION.username : 'local' };
     APP.quizzes.push(quiz);
-    const room = createRoom(quiz);
-    APP.rooms[room.code] = room;
     saveApp();
-    currentRoom = room;
-    alert(`Room created. Students join with code: ${room.code}`);
-    renderLiveRoom(); renderQuizList();
+
+    try {
+      if(useFirebase && db){
+        // optionally prompt for class section
+        const classSection = prompt('Enter class section (optional)', 'Class_Default') || 'Class_Default';
+        const code = await firebaseCreateRoom(quiz, classSection);
+        currentRoom = { code, quiz };
+        // subscribe
+        firebaseListenRoom(code, (roomMeta)=> { currentRoom = currentRoom || {}; Object.assign(currentRoom, roomMeta); renderLiveRoom(); },
+                               (participants)=> { if(currentRoom){ currentRoom.participants = {}; participants.forEach(p=> currentRoom.participants[p.id]=p); renderLiveRoom(); } });
+        alert(`Room created. Students join with code: ${code}`);
+        renderLiveRoom(); renderQuizList();
+      } else {
+        // local-only behavior (fallback)
+        const room = createRoom(quiz);
+        APP.rooms[room.code] = room;
+        saveApp();
+        currentRoom = room;
+        alert(`Room created. Students join with code: ${room.code}`);
+        renderLiveRoom(); renderQuizList();
+      }
+      // reset draft to allow reusing the UI
+      draft = { sets: [] }; selectedSetIndex=-1;
+    } catch(err){
+      console.error(err);
+      alert('Failed to create room: ' + (err.message || err));
+    }
   }
 
   function createRoom(quiz){
-    const code = String(Math.floor(1000 + Math.random()*9000)); // 4-digit
+    const code = String(Math.floor(1000 + Math.random()*9000));
     return { code, quiz, startedAt: Date.now(), participants: {} };
   }
 
@@ -443,15 +582,14 @@
   // ---------- Live room rendering ----------
   function renderLiveRoom(){
     const liveRoom = document.getElementById('live-room'); const players = document.getElementById('live-players');
-    // choose a room to display: prefer currentRoom if set, otherwise pick any existing
     if(!currentRoom){
       const codes = Object.keys(APP.rooms||{});
       if(codes.length) currentRoom = APP.rooms[codes[0]];
     }
     if(currentRoom){
-      liveRoom.innerHTML = `<div><strong>Room ${escapeHtml(currentRoom.code)}</strong><div class="muted small">${escapeHtml(currentRoom.quiz.title)}</div></div>`;
+      liveRoom.innerHTML = `<div><strong>Room ${escapeHtml(currentRoom.code)}</strong><div class="muted small">${escapeHtml((currentRoom.quiz && currentRoom.quiz.title) || '')}</div></div>`;
       players.innerHTML = '';
-      const ps = Object.values(currentRoom.participants||{});
+      const ps = currentRoom.participants ? Object.values(currentRoom.participants) : [];
       if(ps.length === 0) players.innerHTML = '<div class="muted small">No students connected yet.</div>';
       ps.forEach(p => {
         const el = document.createElement('div'); el.innerHTML = `<strong>${escapeHtml(p.name)}</strong> <div class="muted small">Score: ${p.score||0} ${p.pendingEssay ? '· Essay pending' : ''}</div>`;
@@ -462,17 +600,34 @@
     }
   }
 
-  function endRoom(){
+  async function endRoom(){
     if(!currentRoom) return alert('No active room.');
     if(!confirm('End this room and record results?')) return;
-    const rec = { id: nowId('rec'), code: currentRoom.code, quiz: currentRoom.quiz, endedAt: Date.now(), participants: Object.values(currentRoom.participants||{}) };
-    APP.records = APP.records || []; APP.records.push(rec);
-    delete APP.rooms[currentRoom.code]; currentRoom = null; saveApp();
-    renderLiveRoom(); renderRecords();
-    alert('Room ended and results recorded.');
+    try {
+      if(useFirebase && db){
+        const recId = await firebaseEndRoomAndSaveRecord(currentRoom.code);
+        if(firebaseRoomUnsub){ firebaseRoomUnsub(); firebaseRoomUnsub = null; }
+        currentRoom = null;
+        renderLiveRoom(); renderRecords();
+        alert('Room ended and results recorded. Record id: ' + recId);
+      } else {
+        const rec = { id: nowId('rec'), code: currentRoom.code, quiz: currentRoom.quiz, endedAt: Date.now(), participants: Object.values(currentRoom.participants||{}) };
+        APP.records = APP.records || []; APP.records.push(rec);
+        delete APP.rooms[currentRoom.code]; currentRoom = null; saveApp();
+        renderLiveRoom(); renderRecords();
+        alert('Room ended and results recorded (local).');
+      }
+    } catch(err){
+      console.error(err);
+      alert('Failed to archive room: ' + (err.message || err));
+    }
   }
 
   function exportLastRun(){
+    if(useFirebase && db){
+      alert('Use the Records panel to export Firestore records. (You can add an "Export" button that fetches records from Firestore.)');
+      return;
+    }
     if(!APP.records || APP.records.length===0) return alert('No runs recorded.');
     const last = APP.records[APP.records.length-1];
     const csv = toCSV(last);
@@ -483,6 +638,10 @@
 
   function renderRecords(){
     const div = document.getElementById('records'); div.innerHTML = '';
+    if(useFirebase && db){
+      div.innerHTML = '<div class="muted small">Records are stored in Firestore. Use the Firestore console or add a fetch-records button to list them here.</div>';
+      return;
+    }
     if(!APP.records || APP.records.length===0){ div.innerHTML = '<div class="muted">No past runs recorded.</div>'; return; }
     APP.records.slice().reverse().forEach(r => {
       const d = document.createElement('div');
@@ -510,25 +669,49 @@
   }
 
   // ---------- Student: join & quiz ----------
-  function studentJoin(){
+  async function studentJoin(){
     const name = (document.getElementById('student-name').value||'').trim();
     const code = (document.getElementById('student-code').value||'').trim();
     if(!name || !code) return alert('Enter name and room code.');
-    const room = APP.rooms && APP.rooms[code];
-    if(!room) return alert('Room not found or ended.');
-    const pid = nowId('p');
-    room.participants[pid] = { id: pid, name, score: 0, correctCount: 0, answers: {}, pendingEssay: false };
-    saveApp();
-    currentRoom = room;
-    studentSession = { playerId: pid, name, roomCode: code };
-    buildQuestionOrder(room.quiz);
-    showSection('quiz');
-    document.getElementById('quiz-title-display').textContent = room.quiz.title;
-    document.getElementById('quiz-room-display').textContent = `Room ${room.code}`;
-    document.getElementById('q-total').textContent = questionOrder.length || 1;
-    currentGlobalIndex = 0;
-    showNextQuestionOrDirections();
-    renderLiveRoom();
+
+    if(useFirebase && db){
+      try {
+        const pid = nowId('p');
+        const roomData = await firebaseJoinRoom(code, pid, name);
+        studentSession = { playerId: pid, name, roomCode: code };
+        currentRoom = { code, quiz: roomData.quiz };
+        // listen for updates
+        firebaseListenRoom(code, (roomMeta)=> { currentRoom = currentRoom || {}; Object.assign(currentRoom, roomMeta); renderLiveRoom(); },
+                             (participants)=> { if(currentRoom){ currentRoom.participants = {}; participants.forEach(p=> currentRoom.participants[p.id]=p); renderLiveRoom(); } });
+        buildQuestionOrder(currentRoom.quiz);
+        showSection('quiz');
+        document.getElementById('quiz-title-display').textContent = currentRoom.quiz.title;
+        document.getElementById('quiz-room-display').textContent = `Room ${code}`;
+        document.getElementById('q-total').textContent = questionOrder.length || 1;
+        currentGlobalIndex = 0;
+        showNextQuestionOrDirections();
+        renderLiveRoom();
+      } catch(err){
+        alert('Join failed: ' + (err.message || err));
+      }
+    } else {
+      // local fallback
+      const room = APP.rooms && APP.rooms[code];
+      if(!room) return alert('Room not found or ended.');
+      const pid = nowId('p');
+      room.participants[pid] = { id: pid, name, score: 0, correctCount: 0, answers: {}, pendingEssay: false };
+      saveApp();
+      currentRoom = room;
+      studentSession = { playerId: pid, name, roomCode: code };
+      buildQuestionOrder(room.quiz);
+      showSection('quiz');
+      document.getElementById('quiz-title-display').textContent = room.quiz.title;
+      document.getElementById('quiz-room-display').textContent = `Room ${room.code}`;
+      document.getElementById('q-total').textContent = questionOrder.length || 1;
+      currentGlobalIndex = 0;
+      showNextQuestionOrDirections();
+      renderLiveRoom();
+    }
   }
 
   function buildQuestionOrder(quiz){
@@ -545,7 +728,6 @@
       $('#set-title-display').textContent = setObj.title || `Set ${entry.setIndex+1}`;
       $('#set-directions-display').textContent = setObj.directions;
       $('#set-directions-box').classList.remove('hidden');
-      // ack handled by listener defined earlier
     } else {
       loadQuestionForStudent(currentGlobalIndex);
     }
@@ -564,7 +746,6 @@
     $('#q-timer').textContent = remainingTime;
     $('#q-total').textContent = questionOrder.length || 1;
 
-    // render types
     if(q.type === 'mcq'){
       Object.entries(q.options || {}).forEach(([k,v])=>{
         const b = document.createElement('button'); b.className='opt-btn'; b.dataset.opt=k;
@@ -603,7 +784,6 @@
       const ta = document.createElement('textarea'); ta.placeholder = 'Write your essay answer here...'; ta.style.minHeight='120px'; document.getElementById('q-options').appendChild(ta);
     }
 
-    // start timer
     timerHandle = setInterval(()=> {
       remainingTime--; $('#q-timer').textContent = remainingTime;
       if(remainingTime <= 0){ clearInterval(timerHandle); autoSubmit(); }
@@ -612,14 +792,17 @@
 
   function autoSubmit(){ $('#submit-answer').click(); }
 
-  function submitAnswerHandler(){
+  // ---------- Submit answer handler (async because it may call Firebase) ----------
+  async function submitAnswerHandler(){
     if(!studentSession || !currentRoom) return alert('No active session.');
     const pid = studentSession.playerId;
-    const player = currentRoom.participants[pid];
+    // For firebase path, we'll keep a local copy of the player while updating Firestore
+    let player = (currentRoom.participants && currentRoom.participants[pid]) || { id: pid, name: studentSession.name, score:0, correctCount:0, answers: {} };
     const entry = questionOrder[currentGlobalIndex];
     const setObj = currentRoom.quiz.sets[entry.setIndex];
     const q = setObj.questions[entry.qIndex];
     const record = { type: q.type, questionText: q.text, value: null, isCorrect: false };
+
     if(q.type === 'mcq' || q.type === 'tf'){
       const sel = document.querySelector('#q-options .opt-btn.selected');
       const chosen = sel ? sel.dataset.opt : null;
@@ -649,8 +832,30 @@
 
     if(!player.answers) player.answers = {};
     player.answers[q.id] = record;
+    // optional: update player's totalScore field — here totalScore is the running score
+    player.totalScore = player.score || 0;
+
+    // Persist locally
+    if(!currentRoom.participants) currentRoom.participants = {};
+    currentRoom.participants[pid] = player;
     saveApp();
     renderLiveRoom();
+
+    // Update Firestore participant doc (if enabled)
+    if(useFirebase && db){
+      try {
+        await firebaseUpdateParticipantScore(currentRoom.code, pid, {
+          name: player.name,
+          score: player.score || 0,
+          totalScore: player.totalScore || 0,
+          correctCount: player.correctCount || 0,
+          // Avoid writing full answers map to a single doc if it can be large; optional:
+          // answersSummary: Object.keys(player.answers).length
+        });
+      } catch(err){
+        console.error('Failed to update Firestore participant:', err);
+      }
+    }
 
     // show feedback
     if(q.type === 'essay'){
@@ -672,7 +877,6 @@
     showSection('result');
     document.getElementById('final-score').textContent = `${player.name} — Score: ${player.score || 0} / ${questionOrder.length}`;
     document.getElementById('final-details').textContent = `Correct: ${player.correctCount || 0}. Responses saved to Room ${currentRoom.code}.`;
-    // clear student session
     studentSession = null; saveApp();
   }
 
@@ -701,7 +905,6 @@
       }
       rows.push([p.name, p.score||0, p.correctCount||0, ansParts.join(' || ')]);
     });
-    // CSV safe quoting
     return rows.map(r => r.map(f => `"${String(f).replace(/"/g,'""')}"`).join(',')).join('\n');
   }
 
@@ -728,14 +931,9 @@
     saveApp();
   }
 
-  // if there are rooms already, pick first as currentRoom for teacher display
-  const rc = Object.keys(APP.rooms || {});
-  if(rc.length) currentRoom = APP.rooms[rc[0]];
-  renderLiveRoom();
-
   // ---------- small helpers used in UI initial render ----------
   function renderLandingText(){
     // nothing dynamic to do — landing HTML handles the centered text
   }
 
-})(); 
+})();
