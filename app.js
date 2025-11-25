@@ -103,9 +103,9 @@
   if(useFirebase){
     // <-- REPLACE with YOUR firebase config from console -->
     const firebaseConfig = {
-      apiKey: "YOUR_API_KEY",
-      authDomain: "YOUR_PROJECT.firebaseapp.com",
-      projectId: "YOUR_PROJECT_ID",
+      apiKey: "AIzaSyDtMHGuOXpXeHy5wFURbOJHV_K-8G76rkU",
+      authDomain: "techno-quizziz.firebaseapp.com",
+      projectId: "techno-quizziz",
       // storageBucket, messagingSenderId, appId are optional here
     };
 
