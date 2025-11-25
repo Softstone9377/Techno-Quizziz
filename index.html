@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Techno-Quizziz</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Techno-Quizziz <span class="beta">Prototype v2</span></div>
+    <nav>
+      <button id="btn-teacher" class="btn small">Teacher</button>
+      <button id="btn-student" class="btn small outline">Student</button>
+    </nav>
+  </header>
+
+  <main id="app">
+    <!-- Landing (centered) -->
+    <section id="landing" class="card center landing-card">
+      <h1>Techno-Quizziz</h1>
+      <p class="muted center-block">Teacher-made Quizzes for Students.</p>
+      <p class="muted small center-block">Select User Type</p>
+      <div class="role-row">
+        <button id="landing-teacher" class="btn large">I'm a Teacher</button>
+        <button id="landing-student" class="btn large outline">I'm a Student</button>
+      </div>
+      <p class="muted small center-block">Demo</p>
+      <hr class="landing-sep" />
+      <div class="landing-login-helpers">
+        <button id="open-signup" class="btn small">Sign up (Teacher / Student)</button>
+        <button id="open-login" class="btn small outline">Login</button>
+      </div>
+    </section>
+
+    <!-- Auth modal-like area (Signup / Login) -->
+    <section id="auth" class="hidden container">
+      <div class="card center auth-card">
+        <h2 id="auth-title">Create Account</h2>
+
+        <div id="auth-forms">
+          <!-- Signup form -->
+          <div id="signup-form">
+            <label>Username
+              <input id="su-username" />
+            </label>
+            <label>Password
+              <input id="su-password" type="password" />
+            </label>
+            <label>Role
+              <select id="su-role">
+                <option value="teacher">Teacher</option>
+                <option value="student">Student</option>
+              </select>
+            </label>
+            <div class="row">
+              <button id="do-signup" class="btn">Sign up</button>
+              <button id="auth-back" class="btn outline">Back</button>
+            </div>
+          </div>
+
+          <!-- Login form -->
+          <div id="login-form" class="hidden">
+            <label>Username
+              <input id="li-username" />
+            </label>
+            <label>Password
+              <input id="li-password" type="password" />
+            </label>
+            <div class="row">
+              <button id="do-login" class="btn">Login</button>
+              <button id="show-signup" class="btn outline">Sign up</button>
+              <button id="auth-back-2" class="btn outline">Back</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Teacher -->
+    <section id="teacher" class="hidden container">
+      <div class="top-row row" style="justify-content:space-between;align-items:center;">
+        <div>
+          <div id="teacher-welcome" class="muted small"></div>
+        </div>
+        <div class="row">
+          <button id="btn-logout" class="btn outline small">Logout</button>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="col">
+          <div class="card">
+            <h2>Create Quiz</h2>
+            <label>Quiz title
+              <input id="quiz-title" placeholder="Quiz Title" />
+            </label>
+            <label>Timer (Seconds)
+              <input id="quiz-time" type="number" min="5" value="30" />
+            </label>
+
+            <hr/>
+            <div id="sets-area">
+              <h3>Sets</h3>
+              <div id="sets-list" class="list"></div>
+              <div class="card small">
+                <h4>Add New Set</h4>
+                <label>Set title (optional)
+                  <input id="set-title" placeholder="Set Title" />
+                </label>
+                <label>Directions (shown before set)
+                  <textarea id="set-directions" placeholder="Direction"></textarea>
+                </label>
+                <label>Question type
+                  <select id="set-type">
+                    <option value="mcq">Multiple Choice</option>
+                    <option value="tf">True / False</option>
+                    <option value="match">Matchingoption>
+                    <option value="enum">Enumeration</option>
+                    <option value="essay">Essay</option>
+                  </select>
+                </label>
+                <div class="row">
+                  <button id="add-set" class="btn">Add Set</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="question-builder" class="card">
+              <h3>Add Question to Selected Set</h3>
+              <div id="no-set" class="muted">Select Set</div>
+
+              <div id="qb-form" class="hidden">
+                <label>Question text
+                  <textarea id="q-text" placeholder="Question text"></textarea>
+                </label>
+
+                <div id="type-fields"></div>
+
+                <div class="row">
+                  <button id="add-q" class="btn">Add Question</button>
+                  <button id="clear-q" class="btn outline small">Clear</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="row">
+              <button id="save-quiz" class="btn">Save Quiz</button>
+              <button id="start-quiz" class="btn primary">Start Live Quiz</button>
+            </div>
+            <p class="muted small">A 4-digit code is sent after the starting a live room.</p>
+          </div>
+        </div>
+
+        <div class="col">
+          <div class="card">
+            <h2>Saved Quizzes</h2>
+            <div id="quiz-list" class="list"></div>
+          </div>
+
+          <div class="card">
+            <h3>Live Room</h3>
+            <div id="live-room" class="muted">No active room.</div>
+            <div id="live-players" class="list"></div>
+            <div class="row">
+              <button id="end-quiz" class="btn outline small">End Room</button>
+              <button id="export-results" class="btn small">Export CSV</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Recorded Runs</h3>
+            <div id="records" class="list"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Student join -->
+    <section id="student" class="hidden card center">
+      <h2>Join Quiz</h2>
+      <label>Your name
+        <input id="student-name" placeholder="Last Name, First Name" />
+      </label>
+      <label>Room code
+        <input id="student-code" placeholder="Enter the room code provided by the teacher." />
+      </label>
+      <div class="row">
+        <button id="join-room" class="btn large primary">Join</button>
+        <button id="student-back" class="btn large outline">Back</button>
+      </div>
+      <p class="muted small">The Quiz will immediately start after entering the room.</p>
+      <hr />
+      <p class="muted small">Or <button id="student-signup" class="btn outline small">Create Student Account</button></p>
+    </section>
+
+    <!-- Quiz UI -->
+    <section id="quiz" class="hidden container">
+      <div class="card">
+        <div class="quiz-header row">
+          <div>
+            <strong id="quiz-title-display"></strong>
+            <div class="muted small" id="quiz-room-display"></div>
+          </div>
+          <div>
+            <div class="muted small">Time left: <span id="q-timer">0</span>s</div>
+            <div class="muted small">Question <span id="q-index">1</span>/<span id="q-total">1</span></div>
+          </div>
+        </div>
+        <hr/>
+        <div id="set-directions-box" class="card small hidden">
+          <h4 id="set-title-display"></h4>
+          <p id="set-directions-display"></p>
+          <div class="row">
+            <button id="ack-directions" class="btn">Start Set</button>
+          </div>
+        </div>
+
+        <div id="q-content">
+          <p id="q-text-display" class="qtext"></p>
+          <div id="q-options" class="opts"></div>
+        </div>
+        <div class="row">
+          <button id="submit-answer" class="btn primary">Submit Answer</button>
+          <button id="next-q" class="btn outline">Skip / Next</button>
+        </div>
+        <div id="q-feedback" class="muted small"></div>
+      </div>
+    </section>
+
+    <!-- Result -->
+    <section id="result" class="hidden card center">
+      <h2>Quiz Finished</h2>
+      <p id="final-score" class="large"></p>
+      <div id="final-details" class="muted small"></div>
+      <div class="row">
+        <button id="return-home" class="btn">Home</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot muted small">Prototype</footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
