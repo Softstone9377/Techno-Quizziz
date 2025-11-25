@@ -875,13 +875,39 @@
     }, 900);
   }
 
-  function finishStudentQuiz(){
-    const pid = studentSession.playerId; const player = currentRoom.participants[pid];
-    showSection('result');
-    document.getElementById('final-score').textContent = `${player.name} — Score: ${player.score || 0} / ${questionOrder.length}`;
-    document.getElementById('final-details').textContent = `Correct: ${player.correctCount || 0}. Responses saved to Room ${currentRoom.code}.`;
-    studentSession = null; saveApp();
+async function finishStudentQuiz(){
+  const pid = studentSession.playerId;
+  const player = currentRoom.participants[pid];
+
+  // ---- Save student result to Firestore ----
+  if (db && currentRoom && player) {
+    try {
+      await db.collection("studentResults").add({
+        roomCode: currentRoom.code,
+        studentName: player.name,
+        score: player.score || 0,
+        totalItems: questionOrder.length,
+        correct: player.correctCount || 0,
+        classSection: currentRoom.classSection || "Default",
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    } catch (err) {
+      console.error("Error saving student result:", err);
+    }
   }
+
+  // ---- UI updates ----
+  showSection('result');
+  document.getElementById('final-score').textContent =
+      `${player.name} — Score: ${player.score || 0} / ${questionOrder.length}`;
+
+  document.getElementById('final-details').textContent =
+      `Correct: ${player.correctCount || 0}. Responses saved to Room ${currentRoom.code}.`;
+
+  studentSession = null;
+  saveApp();
+}
+
 
   // ---------- Utils & storage ----------
   function saveApp(){ saveJSON(STORAGE.DATA, APP); }
@@ -940,4 +966,5 @@
   }
 
 })();
+
 
