@@ -106,7 +106,10 @@
       apiKey: "AIzaSyDtMHGuOXpXeHy5wFURbOJHV_K-8G76rkU",
       authDomain: "techno-quizziz.firebaseapp.com",
       projectId: "techno-quizziz",
-      // storageBucket, messagingSenderId, appId are optional here
+      storageBucket: "techno-quizziz.firebasestorage.app",
+      messagingSenderId: "756935375946",
+      appId: "1:756935375946:web:7e84435bafbbf39264fab3",
+
     };
 
     if(typeof firebase === 'undefined' || !firebase || !firebase.initializeApp){
@@ -937,3 +940,4 @@
   }
 
 })();
+
